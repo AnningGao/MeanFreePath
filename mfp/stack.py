@@ -34,11 +34,10 @@ def deredden(wave, ebv, RV=3.1):
     return 10**(Al/2.5)
     
 
-def stack_qsos(wave, flux, zqso, z_interval, width_scl=None, 
-               dwv_fin=None, norm_range=(1450, 1470)):
-              
+def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num, 
+               width_scl=None, dwv_fin=None, norm_range=(1450, 1470)):
     """
-    Generate the stacked spectrum.
+    Generate the stacked spectrum and the bootstrap error.
 
     ## Parameters
         wave : (N,) np.ndarray
@@ -50,6 +49,10 @@ def stack_qsos(wave, flux, zqso, z_interval, width_scl=None,
             The redshift array.
         z_interval : tuple 
             The redshift interval to stack, e.g. (2.5, 2.8).
+        boot_size : int
+            The number of spectra to use in each bootstrap.
+        boot_num : int
+            The number of bootstrap.
         width_scl : float 
             The width of the final pixel relative to the original.
             This parameter must be larger than 1 if given.
@@ -60,6 +63,8 @@ def stack_qsos(wave, flux, zqso, z_interval, width_scl=None,
     ## Returns
         flux_tot : (N,) np.ndarray
             The stacked spectrum.
+        flux_boot : (boot_num, N) np.ndarray
+            The bootstrap flux array. We can estimate the error from it.
         num : int
             The number of spectra used to generate the stack.
         navg : (N,) np.ndarray
@@ -134,5 +139,24 @@ def stack_qsos(wave, flux, zqso, z_interval, width_scl=None,
     mask_avg = navg == num 
     flux_tot = np.sum(flux_stack, axis=0) / navg
 
-    return (flux_tot, num, navg, mask_avg)
+    # **bootstrap**
+
+    # initialize the bootstrap array
+    flux_boot = np.zeros((boot_num, npix))
+    navg_boot = np.zeros((boot_num, npix))
+    boot_size = np.min([boot_size, num])  # ensure boot_size <= num
+
+    # generate the random index for bootstrap
+    all_bindx = np.around(np.random.random((boot_num, boot_size)) * num)
+    while np.sum(all_bindx >= num) > 0:
+        all_bindx[all_bindx >= num] = np.around(np.random.random(np.sum(all_bindx >= num)) * num)
+
+    for i in range(boot_num):
+        bindx = all_bindx[i].astype('int')
+        flux_boot[i] = np.sum(flux_stack[bindx], axis=0)
+        navg_boot[i] = np.sum(mask_stack[bindx], axis=0)
+        flux_boot[i][navg_boot[i]>1] = flux_boot[i][navg_boot[i]>1] / navg_boot[i][navg_boot[i]>1]
+
+
+    return (flux_tot, flux_boot, num, navg, mask_avg)
 
