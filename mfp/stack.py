@@ -61,6 +61,8 @@ def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num,
         norm_range : tuple 
             The wavelength range to normalize the spectra.
     ## Returns
+        wave_fin : (N,) np.ndarray
+            The final wavelength array.
         flux_tot : (N,) np.ndarray
             The stacked spectrum.
         flux_boot : (boot_num, N) np.ndarray
@@ -137,7 +139,8 @@ def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num,
 
     navg = np.sum(mask_stack, axis=0) # number of stacked spectra in each pixel
     mask_avg = navg == num 
-    flux_tot = np.sum(flux_stack, axis=0) / navg
+    flux_tot = np.sum(flux_stack, axis=0)
+    flux_tot[navg>1] = flux_tot[navg>1] / navg[navg>1]
 
     # **bootstrap**
 
@@ -158,5 +161,5 @@ def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num,
         flux_boot[i][navg_boot[i]>1] = flux_boot[i][navg_boot[i]>1] / navg_boot[i][navg_boot[i]>1]
 
 
-    return (flux_tot, flux_boot, num, navg, mask_avg)
+    return (wave_fin, flux_tot, flux_boot, num, navg, mask_avg)
 
