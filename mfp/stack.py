@@ -34,8 +34,8 @@ def deredden(wave, ebv, RV=3.1):
     return 10**(Al/2.5)
     
 
-def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num, 
-               width_scl=None, dwv_fin=None, norm_range=(1450, 1470)):
+def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num, 
+               snr_cut=0., width_scl=None, dwv_fin=None, norm_range=(1450, 1470)):
     """
     Generate the stacked spectrum and the bootstrap error.
 
@@ -45,6 +45,8 @@ def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num,
             shared by all spectrum. N is the number of pixels.
         flux : (M, N) np.ndarray 
             The flux array. M is the number of spectra.
+        error : (M, N) np.ndarray
+            The error array.
         zqso : (M,) np.ndarray: 
             The redshift array.
         z_interval : tuple 
@@ -53,6 +55,9 @@ def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num,
             The number of spectra to use in each bootstrap.
         boot_num : int
             The number of bootstrap.
+        snr_cut : float
+            The signal-to-noise ratio cut. The spectra with SNR lower than
+            this value will be excluded from the stack.
         width_scl : float 
             The width of the final pixel relative to the original.
             This parameter must be larger than 1 if given.
@@ -80,6 +85,14 @@ def stack_qsos(wave, flux, zqso, z_interval, boot_size, boot_num,
     """
     mask_z = (zqso > z_interval[0]) & (zqso < z_interval[1])
     num = np.sum(mask_z)
+
+    # exclude the spectra with low SNR
+    if snr_cut > 0:
+        snr = np.zeros((len(flux)))
+        for i in range(len(flux)):
+            mask_snr = (wave/(1+zqso[i]) > 1260) & (wave/(1+zqso[i]) < 1280)
+            snr[i] = np.median(flux[i][mask_snr] / error[i][mask_snr])
+        mask_z = mask_z & (snr >= snr_cut)
 
     # get the final wavelength array
     z_median = np.median(zqso[mask_z])
