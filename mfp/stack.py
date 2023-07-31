@@ -9,6 +9,7 @@
 
 import numpy as np
 import extinction  # https://github.com/kbarbary/extinction
+from tqdm import tqdm
 
 def deredden(wave, ebv, RV=3.1):
     """
@@ -84,7 +85,6 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
         You must and only need to give one of them.
     """
     mask_z = (zqso > z_interval[0]) & (zqso < z_interval[1])
-    num = np.sum(mask_z)
 
     # exclude the spectra with low SNR
     if snr_cut > 0:
@@ -93,6 +93,9 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
             mask_snr = (wave/(1+zqso[i]) > 1260) & (wave/(1+zqso[i]) < 1280)
             snr[i] = np.median(flux[i][mask_snr] / error[i][mask_snr])
         mask_z = mask_z & (snr >= snr_cut)
+    
+    num = np.sum(mask_z)
+
 
     # get the final wavelength array
     z_median = np.median(zqso[mask_z])
@@ -111,7 +114,7 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
         raise ValueError("Something is wrong with width_scl and dwv_fin.")
 
     wave_fin = np.linspace(start=wave[0]/(1+np.max(zqso[mask_z])), \
-                        stop=wave[0]/(1+np.max(zqso[mask_z])) + npix*dwv_fin, \
+                        stop=wave[0]/(1+np.max(zqso[mask_z])) + (npix-1)*dwv_fin, \
                         num=npix)
     
     # get the wavelength interval for each pixel
@@ -130,7 +133,7 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
     # get the flux and redshift array for the selected redshift interval
     flux_use = flux[mask_z]
     zqso_use = zqso[mask_z]
-    for i, flux_this in enumerate(flux_use):
+    for i, flux_this in tqdm(enumerate(flux_use)):
         zqso_this = zqso_use[i]
         wave_rest = wave / (1+zqso_this)
 
