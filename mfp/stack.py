@@ -8,32 +8,7 @@
 # relative to the original pixel width.
 
 import numpy as np
-import extinction  # https://github.com/kbarbary/extinction
 from tqdm import tqdm
-
-def deredden(wave, ebv, RV=3.1):
-    """
-    Generate the flux modification factor to correct reddening.
-
-    ## Parameters
-        wave : (N,) np.ndarray
-            The wavelength array (without shifting by redshift)
-            shared by all spectrum. N is the number of pixels.
-        ebv : (M,) np.ndarray
-            The E(B-V) array. M is the number of spectra.
-        RV : float
-            The R_V parameter in the extinction law.
-            The default value is 3.1. 
-    ## Returns
-        dered : (M, N) np.ndarray
-            The flux modification factor.
-    """
-    AV = ebv * RV
-    Al = np.zeros((len(ebv), len(wave)))
-    for i in range(len(ebv)):
-        Al[i] = extinction.ccm89(wave, AV[i], RV)
-    return 10**(Al/2.5)
-    
 
 def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num, 
                snr_cut=0., width_scl=None, dwv_fin=None, norm_range=(1450, 1470)):
