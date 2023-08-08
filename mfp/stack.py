@@ -31,15 +31,15 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
             The number of spectra to use in each bootstrap.
         boot_num : int
             The number of bootstrap.
-        snr_cut : float
+        snr_cut : float, optional, default:0
             The signal-to-noise ratio cut. The spectra with SNR lower than
             this value will be excluded from the stack.
-        width_scl : float 
+        width_scl : float, optional, default:None
             The width of the final pixel relative to the original.
             This parameter must be larger than 1 if given.
-        dwv_fin : float 
+        dwv_fin : float, optional, default:None
             The width of the final pixel in restframe.            
-        norm_range : tuple 
+        norm_range : tuple, optional, default:(1450, 1470)
             The wavelength range to normalize the spectra.
     ## Returns
         wave_fin : (N,) np.ndarray

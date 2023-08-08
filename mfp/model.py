@@ -1,12 +1,15 @@
 import numpy as np
 from scipy.interpolate import interp1d
+from astropy import cosmology
 import emcee
 import utils
 
+cosmo_default = cosmology.FlatLambdaCDM(H0=70, Om0=0.3)
+
 def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax, 
-              tilt, norm_telf, plot=None, method='MCMC', 
-              mcmc_params=(32, 2000, 200, (1, 200)),
-              chi2_params=(100, (100, 1000))):
+              tilt, norm_telf, cosmo=cosmo_default, plot=None, 
+              method='MCMC', chi2_params=(100, (100, 1000)), 
+              mcmc_params=(32, 2000, 200, (1, 200))):
     """
     Fit the stacked spectrum with the MFP model.
 
@@ -29,26 +32,28 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
         Tilt of the continuum.
     norm_telf: float
         Normalization of the Telfer spectrum.
-    plot_name: str
+    cosmo: astropy.cosmology, optional, default: FlatLambdaCDM(H0=70, Om0=0.3)
+        Cosmology used to calculate the mean free path.
+    plot_name: str, optional, default: None
         Plot the fitting result and save the figure.
-    method: str
+    method: str, optional, default: 'MCMC'
         Method to fit the stacked spectrum. Options are 'chi2' and 'MCMC'.
-    mcmc_params: tuple, (nwalkers, nsteps, nburn, (norm_ini, kappa_ini))
+    mcmc_params: tuple, (nwalkers, nsteps, nburn, (norm_ini, kappa_ini)), optional, default: (32, 2000, 200, (1, 200))
         Parameters for the MCMC fitting. nwalkers is the number of walkers,
         nsteps is the number of steps, nburn is the number of burn-in steps,
         norm_ini is the initial value of the normalization, and kappa_ini is
         the initial value of kappa.
-    chi2_params: tuple, (ngrid, (kappa_min, kappa_max))
+    chi2_params: tuple, (ngrid, (kappa_min, kappa_max)), optional, default: (100, (100, 1000))
         Parameters for the chi2 fitting. ngrid is the number of grid points,
         kappa_min is the estimated minimum value of kappa, and kappa_max is the 
         estimated maximum value of kappa.
 
     ## Returns
     ### If method is 'chi2'
-    mfp: float
+    mfp: astropy.units.quantity.Quantity
         Mean free path of the stacked spectrum.
     ### If method is 'MCMC'
-    mfp: float
+    mfp: astropy.units.quantity.Quantity
         Best value of mean free path of the stacked spectrum.
     mfp_error: array
         Error of the mean free path of the stacked spectrum.
@@ -148,7 +153,7 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
             conti = (continuum[:, coord[0]].reshape(-1, 1) @ np.ones((1, ngrid))) * exp_LL * exp_Lyman
             utils.plot_best_fit(a_wave, a_flux, conti[:, coord[1]], plot)
         
-        return utils.mfp_calculation(kvec[imn[1]], zmed, a_wave)
+        return utils.mfp_calculation(kvec[imn[1]], zmed, a_wave, cosmo)
 
     elif method == 'MCMC':
         # Set up MCMC
@@ -171,8 +176,8 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
             continuum = mcmc_norm[1] * flux_tel * np.exp(-tau_Lyman) * np.exp(-mcmc_kappa[1] * tau_LL)
             utils.plot_best_fit(a_wave, a_flux, continuum, plot)
             
-        mfps = np.array([utils.mfp_calculation(kappa, zmed, a_wave) for kappa in mcmc_kappa])
-        mfp_error = np.array([mfps[0]-mfps[1], mfps[2]-mfps[1]]])
+        mfps = np.array([utils.mfp_calculation(kappa, zmed, a_wave, cosmo) for kappa in mcmc_kappa])
+        mfp_error = np.array([mfps[0]-mfps[1], mfps[2]-mfps[1]])
         return mfps[1], mfp_error, sampler
 
     else:

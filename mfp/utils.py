@@ -2,6 +2,7 @@ import numpy as np
 from scipy.integrate import quad
 from scipy.interpolate import interp1d
 from astropy import units as u
+from astropy import cosmology
 from linetools.spectra.xspectrum1d import XSpectrum1D
 import matplotlib.pyplot as plt
 import extinction  # https://github.com/kbarbary/extinction
@@ -9,13 +10,7 @@ import extinction  # https://github.com/kbarbary/extinction
 c = 2.99792458e10 # speed of light in cm/s
 pc = 3.0856776e18 # parsec in cm
 
-def H0(h100):
-    """
-    Hubble constant in units of cm/s/cm.
-    """
-    return 100 * h100 * 1e5 / (1e6 * pc)
-
-def proper_distance(z_ini, z_end, Om, Ol, Or, Ok, h100):
+def proper_distance(z_ini, z_end, cosmo):
     """
     Calculate the proper distance between two redshifts.
 
@@ -24,24 +19,11 @@ def proper_distance(z_ini, z_end, Om, Ol, Or, Ok, h100):
         Initial redshift.
     z_end: float
         Final redshift.
-    Om: float
-        Density parameter of matter.
-    Ol: float
-        Density parameter of dark energy.
-    Or: float
-        Density parameter of radiation.
-    Ok: float
-        Density parameter of curvature.
-    h100: float
-        Hubble constant in units of 100 km/s/Mpc.
+    cosmo: astropy.cosmology
+        Cosmology model.
     """
-    # Calculate the integral
-    integral = quad(lambda z: 1.0 / (1+z) / \
-                    np.sqrt(Om * (1.0 + z)**3 + Or * (1.0 + z)**4 + \
-                            Ok * (1.0 + z)**2 + Ol), z_ini, z_end)[0]
-    # Calculate the proper distance
-    d = c / H0(h100) * integral
-    return d / (1e6 * pc) # Convert to Mpc
+    distance = cosmo.lookback_distance(z_end) - cosmo.lookback_distance(z_ini)
+    return np.fabs(distance) # Mpc
 
 
 def telfer(wave_fin, wave_ori, flux_telfer_ori):
@@ -60,7 +42,7 @@ def telfer(wave_fin, wave_ori, flux_telfer_ori):
     tel =XSpectrum1D.from_tuple((wave_ori, flux))
     return tel.rebin(wave_fin*u.angstrom).data['flux'].data[0]
 
-def mfp_calculation(kappa, zmed, wave):
+def mfp_calculation(kappa, zmed, wave, cosmo):
     """
     Mean free path calculation given the opacity kappa.
 
@@ -71,6 +53,8 @@ def mfp_calculation(kappa, zmed, wave):
         Median redshift of the stacked spectrum.
     wave: array
         Wavelength array of the stacked spectrum.
+    cosmo: astropy.cosmology
+        Cosmology model.
     """
 
     dwv_fin = wave[1] - wave[0]
@@ -81,7 +65,7 @@ def mfp_calculation(kappa, zmed, wave):
     vecz_extend = (1+z912_extend)**2.75 * ( 1./(1+z912_extend)**expon - 1./(1+zmed)**expon ) / expon 
     tauLL_grid_extend = kappa * vecz_extend
     z912_best = interp1d(tauLL_grid_extend, z912_extend, kind='cubic')(1.0)
-    mfp = proper_distance(z912_best, zmed, 0.3, 0.7, 0, 0, 0.7) # default cosmology
+    mfp = proper_distance(z912_best, zmed, cosmo)
     return mfp
 
 def deredden(wave, ebv, RV=3.1):
