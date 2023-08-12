@@ -23,7 +23,7 @@ def proper_distance(z_ini, z_end, cosmo):
         Cosmology model.
     """
     distance = cosmo.lookback_distance(z_end) - cosmo.lookback_distance(z_ini)
-    return np.fabs(distance) # Mpc
+    return np.fabs(distance).value # Mpc
 
 
 def telfer(wave_fin, wave_ori, flux_telfer_ori):

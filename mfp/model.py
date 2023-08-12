@@ -2,13 +2,13 @@ import numpy as np
 from scipy.interpolate import interp1d
 from astropy import cosmology
 import emcee
-import utils
+from mfp import utils
 
 cosmo_default = cosmology.FlatLambdaCDM(H0=70, Om0=0.3)
 
 def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax, 
-              tilt, norm_telf, cosmo=cosmo_default, plot=None, 
-              method='MCMC', chi2_params=(100, (100, 1000)), 
+              tilt, cosmo=cosmo_default, plot=None, method='MCMC',
+              chi2_params=(30, 0.1, 100, (100, 1000)), 
               mcmc_params=(32, 2000, 200, (1, 200))):
     """
     Fit the stacked spectrum with the MFP model.
@@ -43,10 +43,11 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
         nsteps is the number of steps, nburn is the number of burn-in steps,
         norm_ini is the initial value of the normalization, and kappa_ini is
         the initial value of kappa.
-    chi2_params: tuple, (ngrid, (kappa_min, kappa_max)), optional, default: (100, (100, 1000))
-        Parameters for the chi2 fitting. ngrid is the number of grid points,
-        kappa_min is the estimated minimum value of kappa, and kappa_max is the 
-        estimated maximum value of kappa.
+    chi2_params: tuple, (nnorm, norm_telf, ngrid, (kappa_min, kappa_max)), optional, default: (100, (100, 1000))
+        Parameters for the chi2 fitting. nnorm is the number of normalization factor grid points,
+        norm_telf is the half range of normalization factor (1-norm_telf, 1+norm_telf), 
+        ngrid is the number of kappa grid points, kappa_min is the estimated minimum value of kappa, 
+        and kappa_max is theestimated maximum value of kappa.
 
     ## Returns
     ### If method is 'chi2'
@@ -68,19 +69,6 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
     ngpix = np.sum(gd_stk)  # number of pixels in the stacked spectrum
     a_flux, a_wave, a_error = flux[gd_stk], wave[gd_stk], error[gd_stk] 
     flux_tel = flux_telfer[gd_stk]  # Telfer spectrum in the stacked wavelength range
-
-    #############################################
-    # generate continuum model
-
-    # overall continuum modification
-    nnorm = 30
-    normv = (1-norm_telf) + 2*norm_telf*np.arange(0,step=1, stop=nnorm) / (nnorm-1)
-
-    ltmp = a_wave.reshape(-1,1) @ np.ones((1,nnorm))
-    ctmp = np.ones(ngpix).reshape(-1,1) @ np.array([normv]) 
-    ttmp = flux_tel.reshape(-1,1) @ np.ones((1,nnorm))
-    continuum = ctmp * ttmp * ((ltmp/1450)**tilt)  # column: continuum
-                                                   # row: different normalization
 
     #############################################
     # calculate Lyman series optical depth
@@ -106,7 +94,19 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
     expon = 4.25
 
     if method == 'chi2':
-        ngrid, rngk = chi2_params
+        nnorm, norm_telf, ngrid, rngk = chi2_params
+
+        #############################################
+        # generate continuum model
+
+        # overall continuum modification
+        normv = (1-norm_telf) + 2*norm_telf*np.arange(0,step=1, stop=nnorm) / (nnorm-1)
+
+        ltmp = a_wave.reshape(-1,1) @ np.ones((1,nnorm))
+        ctmp = np.ones(ngpix).reshape(-1,1) @ np.array([normv]) 
+        ttmp = flux_tel.reshape(-1,1) @ np.ones((1,nnorm))
+        continuum = ctmp * ttmp * ((ltmp/1450)**tilt)  # column: continuum
+                                                    # row: different normalization
         
         # Create the vector of kappa
         kvec = np.log10(rngk[0]) + \
@@ -153,14 +153,14 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
             conti = (continuum[:, coord[0]].reshape(-1, 1) @ np.ones((1, ngrid))) * exp_LL * exp_Lyman
             utils.plot_best_fit(a_wave, a_flux, conti[:, coord[1]], plot)
         
-        return utils.mfp_calculation(kvec[imn[1]], zmed, a_wave, cosmo)
+        return utils.mfp_calculation(kvec[imn[1]], zmed, a_wave, cosmo), redchi2
 
     elif method == 'MCMC':
         # Set up MCMC
         nwalkers, nsteps, nburn, (norm_ini, kappa_ini) = mcmc_params
         ndim = 2
         sampler = emcee.EnsembleSampler(nwalkers, ndim, utils.log_probability, 
-                                        args=(a_wave, a_flux, a_error, zmed))
+                                        args=(a_flux, a_error, zmed, tau_Lyman_0, gamma_lyman, z912, flux_tel))
         initial = np.array([norm_ini, kappa_ini]) + 1e-4 * np.random.randn(nwalkers, ndim)
 
         # Run MCMC
@@ -177,7 +177,7 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
             utils.plot_best_fit(a_wave, a_flux, continuum, plot)
             
         mfps = np.array([utils.mfp_calculation(kappa, zmed, a_wave, cosmo) for kappa in mcmc_kappa])
-        mfp_error = np.array([mfps[0]-mfps[1], mfps[2]-mfps[1]])
+        mfp_error = np.array([mfps[2]-mfps[1], mfps[0]-mfps[1]])
         return mfps[1], mfp_error, sampler
 
     else:
