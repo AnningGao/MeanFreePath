@@ -103,25 +103,37 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
 
     # initialize the stack array
     flux_stack = np.zeros((num, npix))
+    error_stack = np.zeros((num, npix))
     mask_stack = np.zeros((num, npix))
 
     # get the flux and redshift array for the selected redshift interval
     flux_use = flux[mask_z]
+    error_use = error[mask_z]
     zqso_use = zqso[mask_z]
     for i, flux_this in tqdm(enumerate(flux_use)):
+        error_this = error[i]
         zqso_this = zqso_use[i]
         wave_rest = wave / (1+zqso_this)
 
         # normalization
         norm_factor = np.median(flux_this[(wave_rest > norm_range[0]) 
                                           & (wave_rest < norm_range[1])])
-
+        
         # brute force method
-        for j in range(npix):
-            gd_pix = (wave_rest >= wave_lower[j]) & (wave_rest <= wave_upper[j])
-            if np.sum(gd_pix) > 0:
-                flux_stack[i,j] = np.median(flux_this[gd_pix]) / norm_factor
-                mask_stack[i,j] = 1
+        if norm_factor > 1e-3:
+            for j in range(npix):
+                gd_pix = (wave_rest >= wave_lower[j]) & (wave_rest <= wave_upper[j])
+                if np.sum(gd_pix) > 0:
+                    flux_stack[i,j] = np.median(flux_this[gd_pix]) / norm_factor
+                    error_stack[i,j] = np.median(error_this[gd_pix]) / norm_factor
+                    mask_stack[i,j] = 1
+        else:
+            for j in range(npix):
+                gd_pix = (wave_rest >= wave_lower[j]) & (wave_rest <= wave_upper[j])
+                if np.sum(gd_pix) > 0:
+                    flux_stack[i,j] = np.median(flux_this[gd_pix]) + 1
+                    error_stack[i,j] = np.median(error_this[gd_pix]) + 1/snr[i] # maintain S/N
+                    mask_stack[i,j] = 1
         
         # double check
         fill = np.where(mask_stack[i] > 0)[0]
@@ -131,7 +143,9 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
     navg = np.sum(mask_stack, axis=0) # number of stacked spectra in each pixel
     mask_avg = navg == num 
     flux_tot = np.sum(flux_stack, axis=0)
+    error_tot = np.sum(error_stack, axis=0)
     flux_tot[navg>1] = flux_tot[navg>1] / navg[navg>1]
+    error_tot[navg>1] = error_tot[navg>1] / navg[navg>1]
 
     # **bootstrap**
 
@@ -152,5 +166,5 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
         flux_boot[i][navg_boot[i]>1] = flux_boot[i][navg_boot[i]>1] / navg_boot[i][navg_boot[i]>1]
 
 
-    return (wave_fin, flux_tot, flux_boot, num, navg, mask_avg)
+    return (wave_fin, flux_tot, error_tot, flux_boot, num, navg, mask_avg)
 
