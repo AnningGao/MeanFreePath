@@ -9,6 +9,7 @@ import extinction  # https://github.com/kbarbary/extinction
 
 c = 2.99792458e10 # speed of light in cm/s
 pc = 3.0856776e18 # parsec in cm
+wLL = 911.7633 # wavelength of Lyman limit in Angstrom
 
 def proper_distance(z_ini, z_end, cosmo):
     """
@@ -136,11 +137,14 @@ def log_likelihood(theta, flux, error, zmed, tau_Lyman_0, gamma_lyman, z912, flu
     flux_tel: array
         Flux of the Telfer spectrum.
     """
-    norm, kappa = theta
-    tau_Lyman = tau_Lyman_0 * ((1+z912)/(1+zmed))**gamma_lyman
+    norm, kappa, tilt = theta
+    # norm, kappa = theta
+    tau_Lyman = tau_Lyman_0 * (wLL/1450)**tilt * ((1+z912)/(1+zmed))**gamma_lyman
+    # tau_Lyman = tau_Lyman_0 * ((1+z912)/(1+zmed))**gamma_lyman
     expon = 4.25
     tau_LL = (1+z912)**2.75 * ( 1./(1+z912)**expon - 1./(1+zmed)**expon ) / expon
-    continuum = norm * flux_tel * np.exp(-tau_Lyman) * np.exp(-kappa * tau_LL)
+    continuum = norm * flux_tel * np.exp(-tau_Lyman) * np.exp(-kappa * tau_LL) * (wLL*(1+z912)/(1+zmed)/1450)**tilt
+    # continuum = norm * flux_tel * np.exp(-tau_Lyman) * np.exp(-kappa * tau_LL)
     return -0.5 * np.sum((flux - continuum)**2 / error**2)
 
 
@@ -152,8 +156,9 @@ def log_prior(theta):
     theta: (2,) array
         Fitted parameters of the model.
     """
-    norm, kappa = theta
-    if 0. < norm < 2. and 100 < kappa < 1000.:
+    norm, kappa, tilt = theta
+    # norm, kappa = theta
+    if 0. < norm < 2. and 50 < kappa < 1000. and -5. < tilt < 5.:
         return 0.0
     return -np.inf
 

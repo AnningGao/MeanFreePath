@@ -63,7 +63,7 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
     """
 
     wLL = 911.7633  # Lyman limit in Angstrom
-    gamma_lyman = 2.5  # slope of Lyman series optical depth evolution with redshift 
+    gamma_lyman = 3  # slope of Lyman series optical depth evolution with redshift 
                        # (Worseck 2014 Eq4) 
     gd_stk = (wave>wvmin) & (wave<wvmax)
     ngpix = np.sum(gd_stk)  # number of pixels in the stacked spectrum
@@ -158,22 +158,27 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
     elif method == 'MCMC':
         # Set up MCMC
         nwalkers, nsteps, nburn, (norm_ini, kappa_ini) = mcmc_params
-        ndim = 2
+        tilt_ini = tilt
+        ndim = 3
+        print('ndim = ', ndim)
         sampler = emcee.EnsembleSampler(nwalkers, ndim, utils.log_probability, 
                                         args=(a_flux, a_error, zmed, tau_Lyman_0, gamma_lyman, z912, flux_tel))
-        initial = np.array([norm_ini, kappa_ini]) + 1e-4 * np.random.randn(nwalkers, ndim)
+        initial = np.array([norm_ini, kappa_ini, tilt_ini]) + 1e-4 * np.random.randn(nwalkers, ndim)
+        # initial = np.array([norm_ini, kappa_ini]) + 1e-4 * np.random.randn(nwalkers, ndim)
 
         # Run MCMC
         sampler.run_mcmc(initial, nsteps)
         flat_samples = sampler.get_chain(discard=nburn, thin=1, flat=True)
         mcmc_norm = np.percentile(flat_samples[:, 0], [16, 50, 84])
         mcmc_kappa = np.percentile(flat_samples[:, 1], [16, 50, 84])
+        mcmc_tilt = np.percentile(flat_samples[:, 2], [16, 50, 84])
 
         #############################################
         # Plotting
         if plot is not None:
             tau_LL = (1+z912)**2.75 * ( 1./(1+z912)**expon - 1./(1+zmed)**expon ) / expon
-            continuum = mcmc_norm[1] * flux_tel * np.exp(-tau_Lyman) * np.exp(-mcmc_kappa[1] * tau_LL)
+            continuum = mcmc_norm[1] * flux_tel * np.exp(-tau_Lyman) * np.exp(-mcmc_kappa[1] * tau_LL) * (a_wave/1450)**mcmc_tilt[1]
+            # continuum = mcmc_norm[1] * flux_tel * np.exp(-tau_Lyman) * np.exp(-mcmc_kappa[1] * tau_LL)
             utils.plot_best_fit(a_wave, a_flux, continuum, plot)
             
         mfps = np.array([utils.mfp_calculation(kappa, zmed, a_wave, cosmo) for kappa in mcmc_kappa])
