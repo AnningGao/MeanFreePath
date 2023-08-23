@@ -63,7 +63,7 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
     """
 
     wLL = 911.7633  # Lyman limit in Angstrom
-    gamma_lyman = 2.5  # slope of Lyman series optical depth evolution with redshift 
+    gamma_lyman = 3.0  # slope of Lyman series optical depth evolution with redshift 
                        # (Worseck 2014 Eq4) 
     gd_stk = (wave>wvmin) & (wave<wvmax)
     ngpix = np.sum(gd_stk)  # number of pixels in the stacked spectrum
