@@ -1,184 +1,155 @@
 import numpy as np
 from scipy.interpolate import interp1d
 from astropy import cosmology
-import emcee
-from mfp import utils
+from mfp.utils import proper_distance
 
 cosmo_default = cosmology.FlatLambdaCDM(H0=70, Om0=0.3)
 
-def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax, 
-              tilt, cosmo=cosmo_default, plot=None, method='MCMC',
-              chi2_params=(30, 0.1, 100, (100, 1000)), 
-              mcmc_params=(32, 2000, 200, (1, 200))):
-    """
-    Fit the stacked spectrum with the MFP model.
+class Model:
+    def __init__(self, cosmo=cosmo_default):
+        self.flux = None
+        self.error = None
+        self.zmed = None
+        self.tau_Lyman_0 = None
+        self.gamma_lyman = None
+        self.z912 = None
+        self.flux_tel = None
+        self.cosmo = cosmo
+        self.mcmc_params = None
+        self.chi2_params = None
 
-    ## Parameters
-    wave: array
-        Wavelength array of the stacked spectrum.
-    flux: array
-        Flux array of the stacked spectrum.
-    error: array
-        Error array of the stacked spectrum.
-    zmed: float
-        Median redshift of the stacked spectrum.
-    flux_telfer: array
-        Flux array of the Telfer spectrum.
-    wvmin: float
-        Minimum wavelength of the stacked spectrum.
-    wvmax: float
-        Maximum wavelength of the stacked spectrum.
-    tilt: float
-        Tilt of the continuum.
-    norm_telf: float
-        Normalization of the Telfer spectrum.
-    cosmo: astropy.cosmology, optional, default: FlatLambdaCDM(H0=70, Om0=0.3)
-        Cosmology used to calculate the mean free path.
-    plot_name: str, optional, default: None
-        Plot the fitting result and save the figure.
-    method: str, optional, default: 'MCMC'
-        Method to fit the stacked spectrum. Options are 'chi2' and 'MCMC'.
-    mcmc_params: tuple, (nwalkers, nsteps, nburn, (norm_ini, kappa_ini)), optional, default: (32, 2000, 200, (1, 200))
-        Parameters for the MCMC fitting. nwalkers is the number of walkers,
-        nsteps is the number of steps, nburn is the number of burn-in steps,
-        norm_ini is the initial value of the normalization, and kappa_ini is
-        the initial value of kappa.
-    chi2_params: tuple, (nnorm, norm_telf, ngrid, (kappa_min, kappa_max)), optional, default: (100, (100, 1000))
-        Parameters for the chi2 fitting. nnorm is the number of normalization factor grid points,
-        norm_telf is the half range of normalization factor (1-norm_telf, 1+norm_telf), 
-        ngrid is the number of kappa grid points, kappa_min is the estimated minimum value of kappa, 
-        and kappa_max is theestimated maximum value of kappa.
+    def get_args(self, *args):
+        self.flux = args[0]
+        self.error = args[1]
+        self.zmed = args[2]
+        self.tau_Lyman_0 = args[3]
+        self.gamma_lyman = args[4]
+        self.z912 = args[5]
+        self.flux_tel = args[6]
 
-    ## Returns
-    ### If method is 'chi2'
-    mfp: astropy.units.quantity.Quantity
-        Mean free path of the stacked spectrum.
-    ### If method is 'MCMC'
-    mfp: astropy.units.quantity.Quantity
-        Best value of mean free path of the stacked spectrum.
-    mfp_error: array
-        Error of the mean free path of the stacked spectrum.
-    sampler: emcee.EnsembleSampler
-        Sampler of the MCMC fitting.
-    """
+    def get_continuum(self, *args):
+        raise NotImplementedError
 
-    wLL = 911.7633  # Lyman limit in Angstrom
-    gamma_lyman = 3.0  # slope of Lyman series optical depth evolution with redshift 
-                       # (Worseck 2014 Eq4) 
-    gd_stk = (wave>wvmin) & (wave<wvmax)
-    ngpix = np.sum(gd_stk)  # number of pixels in the stacked spectrum
-    a_flux, a_wave, a_error = flux[gd_stk], wave[gd_stk], error[gd_stk] 
-    flux_tel = flux_telfer[gd_stk]  # Telfer spectrum in the stacked wavelength range
+    def log_probability(self, *args):
+        raise NotImplementedError
 
-    #############################################
-    # calculate Lyman series optical depth
+    def mfp_calculation(self, *args):
+        raise NotImplementedError
 
-    # No tilt first
-    fLL_notilt = interp1d(wave, flux_telfer, kind='cubic')(wLL)
-    fLL_data = interp1d(wave, flux, kind='cubic')(wLL)
-    tau_Lyman_notilt = np.log(fLL_notilt/fLL_data)
 
-    # Find the continnum correction
-    conti_correct = (wLL/1450)**tilt
-    tau_Lyman_correct = np.log(conti_correct*fLL_notilt/fLL_data)/tau_Lyman_notilt
-    tau_Lyman_0 = tau_Lyman_notilt * tau_Lyman_correct
+class Fiducial(Model):
+    def __init__(self, mcmc_params={"init":(1, 200), "prior":((0., 3.), (0., 1000.)),
+                                    "run_params":{"nwalkers":32, "nsteps":2000, "nburn":200}},
+                 chi2_params={"range":((0.9, 1.1), (100, 1000)), "ngrid":(30, 100), 
+                              "grid_method":("linear", "log")}):
+        """
+        mcmc_params: dict
+            Parameters for the MCMC fitting. init is the intitial values, prior
+            is the allowed range, the nwalkers is the number of walkers, nsteps
+            is the number of steps, nburn is the number of burn-in steps.
+        chi2_params: dict
+            Parameters for the chi2 fitting. range is the allowed range, ngrid
+            is the number of grid points, grid_method is the method to sample the
+            grid points.
+        """
+        super().__init__()
+        self.ndim = 2
+        self.mcmc_params = mcmc_params
+        self.chi2_params = chi2_params
 
-    # Just plain-jane now
-    zeval = a_wave*(1+zmed)/wLL - 1.
-    tau_Lyman = tau_Lyman_0 * ((1+zeval)/(1+zmed))**gamma_lyman
+    def get_continuum(self, theta):
+        """
+        Get the continuum of the stacked spectrum.
 
-    #############################################
-    # MFP model (really opacity model)
+        ## Parameters
+        theta: (2,) array
+            Fitted parameters of the model.
+        """
+        norm, kappa = theta
+        tau_Lyman = self.tau_Lyman_0 * ((1+self.z912)/(1+self.zmed))**self.gamma_lyman
+        expon = 4.25
+        tau_LL = (1+self.z912)**2.75 * ( 1./(1+self.z912)**expon - 1./(1+self.zmed)**expon ) / expon
+        continuum = norm * self.flux_tel * np.exp(-tau_Lyman) * np.exp(-kappa * tau_LL)
+        return continuum
 
-    z912 = a_wave * (1+zmed)/wLL - 1
-    expon = 4.25
+    def log_probability(self, theta):
+        """
+        Probability function for the MCMC sampling. ( p(theta) * p(data|theta) )
+        """
 
-    if method == 'chi2':
-        nnorm, norm_telf, ngrid, rngk = chi2_params
+        def log_likelihood(theta):
+            continuum = self.get_continuum(theta)
+            return -0.5 * np.sum((self.flux - continuum)**2 / self.error**2)
 
-        #############################################
-        # generate continuum model
+        def log_prior(theta):
+            for i, theta_i in enumerate(theta):
+                if not self.mcmc_params["prior"][i][0] < theta_i < self.mcmc_params["prior"][i][1]:
+                    return -np.inf
+            return 0.
 
-        # overall continuum modification
-        normv = (1-norm_telf) + 2*norm_telf*np.arange(0,step=1, stop=nnorm) / (nnorm-1)
+        lp = log_prior(theta)
+        if not np.isfinite(lp):
+            return -np.inf
+        return lp + log_likelihood(theta)
 
-        ltmp = a_wave.reshape(-1,1) @ np.ones((1,nnorm))
-        ctmp = np.ones(ngpix).reshape(-1,1) @ np.array([normv]) 
-        ttmp = flux_tel.reshape(-1,1) @ np.ones((1,nnorm))
-        continuum = ctmp * ttmp * ((ltmp/1450)**tilt)  # column: continuum
-                                                    # row: different normalization
-        
-        # Create the vector of kappa
-        kvec = np.log10(rngk[0]) + \
-            (np.log10(rngk[1]) - np.log10(rngk[0])) * np.arange(ngrid) / (ngrid - 1)
-        kvec = 10**kvec
+    def mfp_calculation(self, theta):
+        """
+        Calculate the MFP.
+        """
+        _, kappa = theta
+        wLL, expon = 911.7633, 4.25
+        wave = (self.z912 + 1) / (self.zmed + 1) * wLL
+        dwv = wave[1] - wave[0]
+        z912_extend = -np.flip(np.arange(step=dwv, start=-wave[-1], stop=-400)) * (1+self.zmed)/wLL - 1
+        vecz_extend = (1+z912_extend)**2.75 * ( 1./(1+z912_extend)**expon - 1./(1+self.zmed)**expon ) / expon
+        tauLL_grid_extend = kappa * vecz_extend
+        z912_best = interp1d(tauLL_grid_extend, z912_extend, kind='cubic')(1.0)
+        mfp = proper_distance(z912_best, self.zmed, self.cosmo)
+        return mfp
 
-        # Fill up model tau grid
-        kgrid = np.ones(ngpix).reshape(-1, 1) @ np.array([kvec])
-        
-        vecz = (1+z912)**2.75 * ( 1./(1+z912)**expon - 1./(1+zmed)**expon ) / expon 
-        gridz = vecz.reshape(-1, 1) @ np.array([np.ones(ngrid)])
-        tauLL_grid = kgrid * gridz
+class KappaEvo(Model):
+    def __init__(self, mcmc_params={"init":(1, 200, 1), "prior":((0., 3.), (0., 1000.), (0., np.inf)),
+                                    "run_params":{"nwalkers":32, "nsteps":2000, "nburn":200}},
+                 chi2_params={"range":((0.9, 1.1), (100, 1000), (0, 10)), "ngrid":(30, 100, 100),
+                              "grid_method":("linear", "log", "linear")}):
+        super().__init__()
+        self.ndim = 3
+        self.mcmc_params = mcmc_params
+        self.chi2_params = chi2_params
 
-        # Set up
-        exp_LL = np.exp(-tauLL_grid)
-        exp_Lyman = np.exp(-tau_Lyman).reshape(-1, 1) @ np.ones((1, ngrid))
+    def get_continuum(self, theta):
+        norm, kappa, gamma = theta
+        tau_Lyman = self.tau_Lyman_0 * ((1+self.z912)/(1+self.zmed))**self.gamma_lyman
+        expon = 4.25 - gamma
+        tau_LL = (1+self.z912)**2.75 * (1 + self.zmed)**(-gamma) * ( 1./(1+self.z912)**expon - 1./(1+self.zmed)**expon ) / expon
+        continuum = norm * self.flux_tel * np.exp(-tau_Lyman) * np.exp(-kappa * tau_LL)
+        return continuum
 
-        # Create observational grids
-        obs_grid = a_flux.reshape(-1, 1) @ np.ones((1, ngrid))
-        error_grid = a_error.reshape(-1, 1) @ np.ones((1, ngrid))
+    def log_probability(self, theta):
 
-        # chi^2 initialization
-        chi2 = np.zeros((nnorm, ngrid))
+        def log_likelihood(theta):
+            continuum = self.get_continuum(theta)
+            return -0.5 * np.sum((self.flux - continuum)**2 / self.error**2)
 
-        # Loop over continuum normalizations to calculate chi^2
-        for ii in range(nnorm):
-            conti = continuum[:, ii].reshape(-1, 1) @ np.ones((1, ngrid))
-            model_flux = conti * exp_LL * exp_Lyman
+        def log_prior(theta):
+            for i, theta_i in enumerate(theta):
+                if not self.mcmc_params["prior"][i][0] < theta_i < self.mcmc_params["prior"][i][1]:
+                    return -np.inf
+            return 0.
 
-            chi2_grid = np.sum((obs_grid - model_flux)**2 / error_grid**2, axis=0)
-            chi2[ii,:] = chi2_grid
+        lp = log_prior(theta)
+        if not np.isfinite(lp):
+            return -np.inf
+        return lp + log_likelihood(theta)
 
-        # Find the minimum chi^2
-        redchi2 = chi2 / (ngpix - 3)
-        min_chi = np.min(redchi2)
-        # Find the minimum chi^2 location
-        imn = np.where(redchi2 == min_chi)
-        coord =np.array([imn[0][0],imn[1][0]]) 
-        # coord[0]: normalization index, coord[1]: kappa index
-
-        #############################################
-        # Plotting
-        if plot is not None:
-            conti = (continuum[:, coord[0]].reshape(-1, 1) @ np.ones((1, ngrid))) * exp_LL * exp_Lyman
-            utils.plot_best_fit(a_wave, a_flux, conti[:, coord[1]], plot)
-        
-        return utils.mfp_calculation(kvec[imn[1]], zmed, a_wave, cosmo), redchi2
-
-    elif method == 'MCMC':
-        # Set up MCMC
-        nwalkers, nsteps, nburn, (norm_ini, kappa_ini) = mcmc_params
-        ndim = 2
-        sampler = emcee.EnsembleSampler(nwalkers, ndim, utils.log_probability, 
-                                        args=(a_flux, a_error, zmed, tau_Lyman_0, gamma_lyman, z912, flux_tel))
-        initial = np.array([norm_ini, kappa_ini]) + 1e-4 * np.random.randn(nwalkers, ndim)
-
-        # Run MCMC
-        sampler.run_mcmc(initial, nsteps)
-        flat_samples = sampler.get_chain(discard=nburn, thin=1, flat=True)
-        mcmc_norm = np.percentile(flat_samples[:, 0], [16, 50, 84])
-        mcmc_kappa = np.percentile(flat_samples[:, 1], [16, 50, 84])
-
-        #############################################
-        # Plotting
-        if plot is not None:
-            tau_LL = (1+z912)**2.75 * ( 1./(1+z912)**expon - 1./(1+zmed)**expon ) / expon
-            continuum = mcmc_norm[1] * flux_tel * np.exp(-tau_Lyman) * np.exp(-mcmc_kappa[1] * tau_LL)
-            utils.plot_best_fit(a_wave, a_flux, continuum, plot)
-            
-        mfps = np.array([utils.mfp_calculation(kappa, zmed, a_wave, cosmo) for kappa in mcmc_kappa])
-        mfp_error = np.array([mfps[2]-mfps[1], mfps[0]-mfps[1]])
-        return mfps[1], mfp_error, sampler
-
-    else:
-        raise ValueError("method must be either 'chi2' or 'MCMC'")
+    def mfp_calculation(self, theta):
+        _, kappa, gamma = theta
+        wLL, expon = 911.7633, 4.25 - gamma
+        wave = (self.z912 + 1) / (self.zmed + 1) * wLL
+        dwv = wave[1] - wave[0]
+        z912_extend = -np.flip(np.arange(step=dwv, start=-wave[-1], stop=-400)) * (1+self.zmed)/wLL - 1
+        vecz_extend = (1+z912_extend)**2.75 * (1+self.zmed)**(-gamma) * ( 1./(1+z912_extend)**expon - 1./(1+self.zmed)**expon ) / expon
+        tauLL_grid_extend = kappa * vecz_extend
+        z912_best = interp1d(tauLL_grid_extend, z912_extend, kind='cubic')(1.0)
+        mfp = proper_distance(z912_best, self.zmed, self.cosmo)
+        return mfp
