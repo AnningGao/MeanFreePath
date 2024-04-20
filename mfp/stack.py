@@ -9,23 +9,24 @@
 
 import numpy as np
 from tqdm import tqdm
+from multiprocessing import Pool
 
-def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num, 
+def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
                snr_cut=0., width_scl=None, dwv_fin=None, norm_range=(1450, 1470)):
     """
     Generate the stacked spectrum and the bootstrap error.
 
     ## Parameters
         wave : (N,) np.ndarray
-            The wavelength array (without shifting by redshift) 
+            The wavelength array (without shifting by redshift)
             shared by all spectrum. N is the number of pixels.
-        flux : (M, N) np.ndarray 
+        flux : (M, N) np.ndarray
             The flux array. M is the number of spectra.
         error : (M, N) np.ndarray
             The error array.
-        zqso : (M,) np.ndarray: 
+        zqso : (M,) np.ndarray:
             The redshift array.
-        z_interval : tuple 
+        z_interval : tuple
             The redshift interval to stack, e.g. (2.5, 2.8).
         boot_size : int
             The number of spectra to use in each bootstrap.
@@ -38,7 +39,7 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
             The width of the final pixel relative to the original.
             This parameter must be larger than 1 if given.
         dwv_fin : float, optional, default:None
-            The width of the final pixel in restframe.            
+            The width of the final pixel in restframe.
         norm_range : tuple, optional, default:(1450, 1470)
             The wavelength range to normalize the spectra.
     ## Returns
@@ -53,10 +54,10 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
         navg : (N,) np.ndarray
             The number of spectra used to generate each pixel.
         mask_avg : (N,) np.ndarray
-            The mask array indicating whether a pixel is stacked from 
+            The mask array indicating whether a pixel is stacked from
             the full set of spectra in the redshift interval.
     ## Notes
-        The parameter ``width_scl`` and ``dwv_fin`` are mutually exclusive. 
+        The parameter ``width_scl`` and ``dwv_fin`` are mutually exclusive.
         You must and only need to give one of them.
     """
     mask_z = (zqso > z_interval[0]) & (zqso < z_interval[1])
@@ -68,7 +69,7 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
             mask_snr = (wave/(1+zqso[i]) > 1260) & (wave/(1+zqso[i]) < 1280)
             snr[i] = np.median(flux[i][mask_snr] / error[i][mask_snr])
         mask_z = mask_z & (snr >= snr_cut)
-    
+
     num = np.sum(mask_z)
 
 
@@ -91,7 +92,7 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
     wave_fin = np.linspace(start=wave[0]/(1+np.max(zqso[mask_z])), \
                         stop=wave[0]/(1+np.max(zqso[mask_z])) + (npix-1)*dwv_fin, \
                         num=npix)
-    
+
     # get the wavelength interval for each pixel
     wave_upper = (wave_fin + np.roll(wave_fin, -1))/2
     wave_upper[-1] = wave_upper[-2] + dwv_fin
@@ -103,57 +104,48 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
 
     # initialize the stack array
     flux_stack = np.zeros((num, npix))
-    error_stack = np.zeros((num, npix))
     mask_stack = np.zeros((num, npix))
-    mask_stack_error = np.zeros((num, npix))
 
     # get the flux and redshift array for the selected redshift interval
     flux_use = flux[mask_z]
-    error_use = error[mask_z]
     zqso_use = zqso[mask_z]
-    for i, flux_this in tqdm(enumerate(flux_use)):
-        error_this = error_use[i]
-        zqso_this = zqso_use[i]
-        wave_rest = wave / (1+zqso_this)
 
-        # normalization
-        norm_factor = np.median(flux_this[(wave_rest > norm_range[0]) 
-                                          & (wave_rest < norm_range[1])])
-        
-        # brute force method
+    def stack_single(*args):
+        i, flux, zqso = args
+        wave_rest = wave / (1+zqso)
+        norm_factor = np.median(flux[(wave_rest > norm_range[0]) & (wave_rest < norm_range[1])])
+        flux_stack_this, mask_stack_this = np.zeros(npix), np.zeros(npix)
         if norm_factor > 1e-3:
             for j in range(npix):
                 gd_pix = (wave_rest >= wave_lower[j]) & (wave_rest <= wave_upper[j])
                 if np.sum(gd_pix) > 0:
-                    flux_stack[i,j] = np.median(flux_this[gd_pix]) / norm_factor
-                    error_thispoint = np.median(error_this[gd_pix]) / norm_factor
-                    if not np.isnan(error_thispoint) and not np.isinf(error_thispoint):
-                        error_stack[i,j] = error_thispoint
-                        mask_stack_error[i,j] = 1
-                    mask_stack[i,j] = 1
+                    flux_stack_this[j] = np.mean(flux[gd_pix]) / norm_factor
+                    mask_stack_this[j] = 1
         else:
+            print(f"Warning: The normalization factor is too small for spectrum {i}.")
             for j in range(npix):
                 gd_pix = (wave_rest >= wave_lower[j]) & (wave_rest <= wave_upper[j])
                 if np.sum(gd_pix) > 0:
-                    flux_stack[i,j] = np.median(flux_this[gd_pix]) + 1
-                    error_thispoint = np.median(error_this[gd_pix]) + 1/snr[i] # maintain S/N
-                    if not np.isnan(error_thispoint) and not np.isinf(error_thispoint):
-                        error_stack[i,j] = error_thispoint
-                        mask_stack_error[i,j] = 1
-                    mask_stack[i,j] = 1
-        
+                    flux_stack_this[j] = np.mean(flux[gd_pix]) + 1
+                    mask_stack_this[j] = 1
+
         # double check
-        fill = np.where(mask_stack[i] > 0)[0]
+        fill = np.where(mask_stack_this > 0)[0]
         if fill[-1] - fill[0] != len(fill) - 1:
-            raise ValueError(f"The mask is not continuous!  i={i}")
+            raise ValueError(f"The mask of spectrum {i} is not continuous!")
+
+        return flux_stack_this, mask_stack_this
+
+    with Pool(8) as p:
+        results = list(tqdm(p.imap(stack_single, zip(range(len(flux_use)), flux_use, zqso_use)), total=num))
+
+    for i, result in enumerate(results):
+            flux_stack[i], mask_stack[i] = result
 
     navg = np.sum(mask_stack, axis=0) # number of stacked spectra in each pixel
-    navg_error = np.sum(mask_stack_error, axis=0)
-    mask_avg = navg == num 
+    mask_avg = navg == num
     flux_tot = np.sum(flux_stack, axis=0)
-    error_tot = np.sum(error_stack, axis=0)
     flux_tot[navg>1] = flux_tot[navg>1] / navg[navg>1]
-    error_tot[navg_error>1] = error_tot[navg_error>1] / navg_error[navg_error>1]
 
     # **bootstrap**
 
@@ -174,5 +166,7 @@ def stack_qsos(wave, flux, error, zqso, z_interval, boot_size, boot_num,
         flux_boot[i][navg_boot[i]>1] = flux_boot[i][navg_boot[i]>1] / navg_boot[i][navg_boot[i]>1]
 
 
-    return (wave_fin, flux_tot, error_tot, flux_boot, num, navg, mask_avg)
+    # return (wave_fin, flux_tot, error_tot, flux_boot, num, navg, mask_avg)
+    return (wave_fin, flux_tot, flux_boot, num, navg, mask_avg)
+
 
