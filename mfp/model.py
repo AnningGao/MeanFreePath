@@ -72,25 +72,24 @@ class Fiducial(Model):
         continuum = norm * self.flux_tel * np.exp(-tau_Lyman) * np.exp(-kappa * tau_LL)
         return continuum
 
+    def log_likelihood(self, theta):
+        continuum = self.get_continuum(theta)
+        return -0.5 * np.sum((self.flux - continuum)**2 / self.error**2)
+
+    def log_prior(self, theta):
+        for i, theta_i in enumerate(theta):
+            if not self.mcmc_params["prior"][i][0] < theta_i < self.mcmc_params["prior"][i][1]:
+                return -np.inf
+        return 0.
+
     def log_probability(self, theta):
         """
         Probability function for the MCMC sampling. ( p(theta) * p(data|theta) )
         """
-
-        def log_likelihood(theta):
-            continuum = self.get_continuum(theta)
-            return -0.5 * np.sum((self.flux - continuum)**2 / self.error**2)
-
-        def log_prior(theta):
-            for i, theta_i in enumerate(theta):
-                if not self.mcmc_params["prior"][i][0] < theta_i < self.mcmc_params["prior"][i][1]:
-                    return -np.inf
-            return 0.
-
-        lp = log_prior(theta)
+        lp = self.log_prior(theta)
         if not np.isfinite(lp):
             return -np.inf
-        return lp + log_likelihood(theta)
+        return lp + self.log_likelihood(theta)
 
     def mfp_calculation(self, theta):
         """
@@ -125,22 +124,21 @@ class KappaEvo(Model):
         continuum = norm * self.flux_tel * np.exp(-tau_Lyman) * np.exp(-kappa * tau_LL)
         return continuum
 
+    def log_likelihood(self, theta):
+        continuum = self.get_continuum(theta)
+        return -0.5 * np.sum((self.flux - continuum)**2 / self.error**2)
+
+    def log_prior(self, theta):
+        for i, theta_i in enumerate(theta):
+            if not self.mcmc_params["prior"][i][0] < theta_i < self.mcmc_params["prior"][i][1]:
+                return -np.inf
+        return 0.
+
     def log_probability(self, theta):
-
-        def log_likelihood(theta):
-            continuum = self.get_continuum(theta)
-            return -0.5 * np.sum((self.flux - continuum)**2 / self.error**2)
-
-        def log_prior(theta):
-            for i, theta_i in enumerate(theta):
-                if not self.mcmc_params["prior"][i][0] < theta_i < self.mcmc_params["prior"][i][1]:
-                    return -np.inf
-            return 0.
-
-        lp = log_prior(theta)
+        lp = self.log_prior(theta)
         if not np.isfinite(lp):
             return -np.inf
-        return lp + log_likelihood(theta)
+        return lp + self.log_likelihood(theta)
 
     def mfp_calculation(self, theta):
         _, kappa, gamma = theta

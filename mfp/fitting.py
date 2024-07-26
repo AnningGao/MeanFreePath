@@ -60,7 +60,7 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
 
     # calculate Lyman series optical depth
     fLL_notilt = interp1d(wave, flux_telfer, kind='cubic')(wLL)
-    fLL_data = interp1d(wave, flux, kind='cubic')(wLL)
+    fLL_data = np.median(flux[np.abs(wave-wLL)<10])
     tau_Lyman_0 = np.log(fLL_notilt/fLL_data)
 
     z912 = a_wave * (1+zmed)/wLL - 1
