@@ -1,14 +1,16 @@
 import numpy as np
-from scipy.interpolate import interp1d
 import emcee
+from scipy.interpolate import interp1d
+
 from mfp import utils
 from tqdm import tqdm
-
+from multiprocessing import Pool
 from mfp.model import Fiducial
+
 model_default = Fiducial()
 
-def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
-              gamma_lyman=3.0, plot=None, method='mcmc', model=model_default):
+def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax, flux_boot=None,
+              num_threads=10, gamma_lyman=3.0, plot=None, method='mcmc', model=model_default):
     """
     Fit the stacked spectrum with the MFP model.
 
@@ -27,6 +29,8 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
         Minimum wavelength of the stacked spectrum.
     wvmax: float
         Maximum wavelength of the stacked spectrum.
+    flux_boot: array, optional, default: None
+        Bootstrap flux for MCMC analysis.
     gamma_lyman: float, optional, default: 3.0
         Power law index of the Lyman series opacity.
     plot: str, optional, default: None
@@ -56,6 +60,7 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
     wLL = 911.7633  # Lyman limit in Angstrom
     gd_stk = (wave>wvmin) & (wave<wvmax)
     a_flux, a_wave, a_error = flux[gd_stk], wave[gd_stk], error[gd_stk]
+    flux_boot = flux_boot[:, gd_stk] if flux_boot is not None else None
     flux_tel = flux_telfer[gd_stk]  # Telfer spectrum in the stacked wavelength range
 
     # calculate Lyman series optical depth
@@ -109,34 +114,34 @@ def model_fit(wave, flux, error, zmed, flux_telfer, wvmin, wvmax,
         return theta_best, chi2_min, chi2_matrix
 
     if method == 'mcmc':
+        if flux_boot is None or num_threads is None:
+            raise ValueError("flux_boot and num_threads must be provided for MCMC fitting")
+
         # Set up MCMC
         nwalkers = model.mcmc_params["run_params"]["nwalkers"]
         nsteps = model.mcmc_params["run_params"]["nsteps"]
         nburn = model.mcmc_params["run_params"]["nburn"]
         ndim = model.ndim
-
-        sampler = emcee.EnsembleSampler(nwalkers, ndim, model.log_probability)
         initial = np.array(model.mcmc_params["init"]) + 1e-4 * np.random.randn(nwalkers, ndim)
+        arguments = (model, nwalkers, nsteps, nburn, ndim, initial)
 
-        # Run MCMC
-        sampler.run_mcmc(initial, nsteps)
+        with Pool(num_threads) as p:
+            results = p.starmap(
+                get_sample,
+                [(flux_boot_this, arguments) for flux_boot_this in flux_boot]
+            )
 
-        # Get MLE result
-        log_probs = sampler.get_log_prob()
-        max_prob_idx = np.unravel_index(log_probs.argmax(), log_probs.shape)
-        mle_sample = sampler.get_chain()[max_prob_idx]
+        sample_total = np.array([result[0] for result in results]).reshape(-1, ndim)
+        samplers = np.array([result[1] for result in results])
 
-        # Get uncertainties (assuming Gaussian dist)
-        # TODO: consider uncertainty estimation from an asymmetric dist
-        flat_samples = sampler.get_chain(discard=nburn, thin=1, flat=True)
-        stds = np.std(flat_samples, axis=0)
-
-        # Plotting
-        if plot is not None:
-            continuum = model.get_continuum(mle_sample)
-            utils.plot_best_fit(a_wave, a_flux, continuum, plot)
-
-        return mle_sample, stds, sampler
+        return sample_total, samplers, model
 
     else:
         raise ValueError("method must be either 'chi2' or 'mcmc'")
+
+def get_sample(flux_boot_this, arguments):
+    model, nwalkers, nsteps, nburn, ndim, initial = arguments
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, model.log_probability, args=(flux_boot_this,))
+    sampler.run_mcmc(initial, nsteps)
+    sample = sampler.get_chain(discard=nburn, thin=1, flat=True)
+    return sample, sampler
